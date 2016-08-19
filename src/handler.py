@@ -93,7 +93,7 @@ class LeaderboardAroundMeHandler(AuthenticatedHandler):
                 404, "Leaderboard '%s' was not found." % leaderboard_id)
 
         else:
-            self.write(ujson.dumps(leaderboard_records))
+            self.dumps(leaderboard_records)
 
 
 class LeaderboardEntryHandler(AuthenticatedHandler):
@@ -148,7 +148,7 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
             raise HTTPError(
                 404, "Leaderboard '%s' was not found." % leaderboard_id)
         else:
-            self.write(ujson.dumps(leaderboard_records))
+            self.dumps(leaderboard_records)
 
 
 class LeaderboardTopHandler(AuthenticatedHandler):
@@ -176,7 +176,7 @@ class LeaderboardTopHandler(AuthenticatedHandler):
                 404, "Leaderboard '%s' was not found." % leaderboard_id)
 
         else:
-            self.write(leaderboard_records)
+            self.dumps(leaderboard_records)
 
     @coroutine
     @scoped()
