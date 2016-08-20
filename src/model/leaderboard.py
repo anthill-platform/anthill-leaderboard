@@ -194,6 +194,7 @@ class LeaderboardsModel(Model):
             {
                 "account": record["user"],
                 "score": record["score"],
+                "display_name": record["display_name"],
                 "profile": record["profile"] if isinstance(record["profile"], dict) else ujson.loads(record["profile"])
             }
             for record in leaderboard_data
