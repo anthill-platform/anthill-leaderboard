@@ -15,6 +15,14 @@ class LeaderboardNotFound(Exception):
 
 class LeaderboardsModel(Model):
 
+    """
+    Leaderboard model. Manages leaderboards itself, and user records in such leaderboards.
+
+    Please note that MySQL 5.1 Events feature is used (please see /sql/records_expiration.sql).
+    https://dev.mysql.com/doc/refman/5.7/en/event-scheduler.html
+
+    """
+
     def __init__(self, db):
         self.db = db
 
@@ -23,6 +31,9 @@ class LeaderboardsModel(Model):
 
     def get_setup_tables(self):
         return ["leaderboards", "records"]
+
+    def get_setup_events(self):
+        return ["records_expiration"]
 
     @coroutine
     def delete_entry(self, leaderboard_id, gamespace_id, user_id, sort_order):
@@ -59,17 +70,17 @@ class LeaderboardsModel(Model):
     @coroutine
     def find_leaderboard(self, leaderboard_name, gamespace_id, sort_order, db=None):
 
-        brd_id = yield (db or self.db).get(
+        leaderboard = yield (db or self.db).get(
             """
                 SELECT `leaderboard_id`
                 FROM `leaderboards`
                 WHERE `leaderboard_name` = %s AND `gamespace_id` = %s AND `leaderboard_sort_order` = %s;
             """, leaderboard_name, gamespace_id, sort_order)
 
-        if brd_id is None:
+        if leaderboard is None:
             raise LeaderboardNotFound(leaderboard_name)
 
-        raise Return(brd_id["leaderboard_id"])
+        raise Return(leaderboard["leaderboard_id"])
 
     @coroutine
     def list_around_me_records(self, user_id, leaderboard_name, gamespace_id, sort_order, offset, limit):
@@ -179,12 +190,12 @@ class LeaderboardsModel(Model):
         result = yield (db or self.db).insert(
             """
                 INSERT INTO `records`
-                (`account_id`, `leaderboard_id`, `gamespace_id`, `published_at`, `time_to_live`,
+                (`account_id`, `leaderboard_id`, `gamespace_id`, `expire_at`,
                 `profile`, `score`, `display_name`)
-                VALUES (%s, %s, %s, NOW(), %s, %s, %s, %s);
+                VALUES (%s, %s, %s, NOW() + INTERVAL %s SECOND, %s, %s, %s);
             """,
             account_id, leaderboard_id, gamespace_id, time_to_live,
-            ujson.dumps(profile), score, display_name)
+                ujson.dumps(profile), score, display_name)
 
         raise Return(result)
 
@@ -193,11 +204,12 @@ class LeaderboardsModel(Model):
         return [
             {
                 "account": record["user"],
+                "rank": rank,
                 "score": record["score"],
                 "display_name": record["display_name"],
                 "profile": record["profile"] if isinstance(record["profile"], dict) else ujson.loads(record["profile"])
             }
-            for record in leaderboard_data
+            for rank, record in enumerate(leaderboard_data, start=1)
         ]
 
     @coroutine
@@ -256,7 +268,7 @@ class LeaderboardsModel(Model):
                     yield db.execute(
                         """
                             UPDATE `records`
-                            SET `published_at`=NOW(), `time_to_live`=%s, `profile`=%s,
+                            SET `expire_at`=NOW() + INTERVAL %s SECOND, `profile`=%s,
                                 `score`=%s, `display_name`=%s
                             WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s;
                         """,

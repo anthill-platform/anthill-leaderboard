@@ -65,6 +65,16 @@ class InternalHandler(object):
 
         raise Return(response)
 
+    @coroutine
+    def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
+
+        leaderboards = self.application.leaderboards
+        response = yield leaderboards.list_top_records(
+            leaderboard_name, gamespace, sort_order, offset, limit)
+
+        raise Return(response)
+
+
 
 class LeaderboardAroundMeHandler(AuthenticatedHandler):
     @coroutine
