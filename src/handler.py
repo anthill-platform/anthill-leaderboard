@@ -4,7 +4,7 @@ import ujson
 from tornado.gen import coroutine, Return
 from tornado.web import HTTPError
 
-from common.access import scoped, AccessToken
+from common.access import scoped, AccessToken, InternalError
 from common.handler import AuthenticatedHandler
 
 from model.leaderboard import LeaderboardNotFound
@@ -69,8 +69,12 @@ class InternalHandler(object):
     def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
 
         leaderboards = self.application.leaderboards
-        response = yield leaderboards.list_top_records(
-            leaderboard_name, gamespace, sort_order, offset, limit)
+
+        try:
+            response = yield leaderboards.list_top_records(
+                leaderboard_name, gamespace, sort_order, offset, limit)
+        except LeaderboardNotFound:
+            raise InternalError(404, "No such leaderboard")
 
         raise Return(response)
 
