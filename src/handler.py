@@ -34,25 +34,6 @@ class InternalHandler(object):
                 gamespace)
 
         raise Return("OK")
-    
-    @coroutine
-    def get_leaderboard(self, name, order, gamespace, **other):
-        try:
-            leaderboards = self.application.leaderboards
-
-            offset = other.get("offset", 0)
-            limit = other.get("limit", self.application.limit)
-
-            leaderboard_records = yield leaderboards.list_top_records(
-                name, gamespace, order,
-                offset, limit)
-
-        except LeaderboardNotFound:
-            raise HTTPError(
-                404, "Leaderboard '%s' was not found." % name)
-
-        else:
-            raise Return(leaderboard_records)
 
     @coroutine
     def post(self, account, gamespace, sort_order, leaderboard_name, score, display_name, expire_in, profile):
@@ -66,18 +47,17 @@ class InternalHandler(object):
         raise Return(response)
 
     @coroutine
-    def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
+    def get_top(self, gamespace, sort_order, leaderboard_name, limit=1000):
 
         leaderboards = self.application.leaderboards
 
         try:
-            response = yield leaderboards.list_top_records(
-                leaderboard_name, gamespace, sort_order, offset, limit)
+            response = yield leaderboards.list_top_all_clusters(
+                leaderboard_name, gamespace, sort_order, limit)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
         raise Return(response)
-
 
 
 class LeaderboardAroundMeHandler(AuthenticatedHandler):
@@ -168,39 +148,41 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
 class LeaderboardTopHandler(AuthenticatedHandler):
     @coroutine
     @scoped()
-    def get(self, sort_order, leaderboard_id):
+    def get(self, sort_order, leaderboard_name):
         try:
             leaderboards = self.application.leaderboards
 
             offset = self.get_argument("offset", 0)
             limit = self.get_argument("limit", self.application.limit)
 
+            account_id = self.current_user.token.account
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
             leaderboard_records = yield leaderboards.list_top_records(
-                leaderboard_id,
+                leaderboard_name,
                 gamespace_id,
+                account_id,
                 sort_order,
                 offset,
                 limit)
 
         except LeaderboardNotFound:
             raise HTTPError(
-                404, "Leaderboard '%s' was not found." % leaderboard_id)
+                404, "Leaderboard '%s' was not found." % leaderboard_name)
 
         else:
             self.dumps(leaderboard_records)
 
     @coroutine
     @scoped()
-    def post(self, sort_order, leaderboard_id):
+    def post(self, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
         score = self.get_argument("score")
         display_name = self.get_argument("display_name")
-        expire_in = self.get_argument("expire_in")
+        expire_in = self.get_argument("expire_in", 604800)
 
         try:
             profile = ujson.loads(self.get_argument("profile", "{}"))
@@ -212,7 +194,7 @@ class LeaderboardTopHandler(AuthenticatedHandler):
             AccessToken.GAMESPACE)
 
         yield leaderboards.set_top_entries(
-            leaderboard_id,
+            leaderboard_name,
             gamespace_id,
             account_id,
             display_name,

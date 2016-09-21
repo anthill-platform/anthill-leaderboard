@@ -47,3 +47,9 @@ define("default_limit",
        type=int,
        group="leaderboard",
        help="Default limit of leaderboard records to return")
+
+define("cluster_size",
+       default=50,
+       type=int,
+       group="leaderboard",
+       help="Cluster size to group users around")
