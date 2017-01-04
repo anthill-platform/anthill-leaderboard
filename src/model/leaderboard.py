@@ -3,9 +3,8 @@ import ujson
 
 from tornado.gen import coroutine, Return
 
-from common.database import DatabaseError
 from common.model import Model
-from common.cluster import Cluster, ClusterError
+from common.cluster import Cluster, NoClusterError
 from common.options import options
 
 import logging
@@ -192,6 +191,7 @@ class LeaderboardsModel(Model):
                 "data": LeaderboardsModel.render_records(records)
             })
 
+    # noinspection PyBroadException
     @coroutine
     def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order, limit):
 
@@ -213,7 +213,7 @@ class LeaderboardsModel(Model):
                     data = yield self.list_top_records_cluster(
                         brd.leaderboard_id, gamespace_id,
                         cluster_id, sort_order, 0, limit)
-                except Exception as e:
+                except Exception:
                     logging.exception("Error during requesting top clusters")
                 else:
                     clusters_data.append(data)
@@ -246,8 +246,11 @@ class LeaderboardsModel(Model):
             brd = yield self.find_leaderboard(leaderboard_name, gamespace_id, sort_order, db)
 
             if LeaderboardsModel.is_clustered(leaderboard_name):
-                cluster_id = yield self.cluster.get_cluster(
-                    gamespace_id, account_id, brd.leaderboard_id, self.cluster_size)
+                try:
+                    cluster_id = yield self.cluster.get_cluster(
+                        gamespace_id, account_id, brd.leaderboard_id, self.cluster_size, auto_create=False)
+                except NoClusterError:
+                    raise LeaderboardNotFound(leaderboard_name)
             else:
                 cluster_id = 0
 
