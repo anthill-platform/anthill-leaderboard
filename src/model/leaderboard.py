@@ -232,7 +232,7 @@ class LeaderboardsModel(Model):
                     ORDER BY score {0}
                     LIMIT %s, %s;
                 """.format(sort_order.upper()),
-                gamespace_id, leaderboard_id, cluster_id, offset, int(limit))
+                gamespace_id, leaderboard_id, cluster_id, int(offset), int(limit))
 
             raise Return({
                 "entries": len(records),
