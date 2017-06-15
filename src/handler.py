@@ -183,13 +183,21 @@ class LeaderboardTopHandler(AuthenticatedHandler):
         score = self.get_argument("score")
         display_name = self.get_argument("display_name")
         expire_in = self.get_argument("expire_in", 604800)
+        force_account_id = self.get_argument("force_account_id", 0)
+
+        account_id = self.current_user.token.account
+
+        if force_account_id:
+            if self.token.has_scope("lb_arbitrary_account"):
+                account_id = force_account_id
+            else:
+                raise HTTPError(403, "Not allowed")
 
         try:
             profile = ujson.loads(self.get_argument("profile", "{}"))
         except (KeyError, ValueError):
             raise HTTPError(400, "Corrupted 'profile' JSON")
 
-        account_id = self.current_user.token.account
         gamespace_id = self.current_user.token.get(
             AccessToken.GAMESPACE)
 

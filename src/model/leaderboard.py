@@ -101,7 +101,8 @@ class LeaderboardsModel(Model):
             """
                 SELECT `leaderboard_id`, `leaderboard_name`
                 FROM `leaderboards`
-                WHERE `leaderboard_name` = %s AND `gamespace_id` = %s AND `leaderboard_sort_order` = %s;
+                WHERE `leaderboard_name` = %s AND `gamespace_id` = %s AND `leaderboard_sort_order` = %s
+                LIMIT 1;
             """, leaderboard_name, gamespace_id, sort_order)
 
         if leaderboard is None:

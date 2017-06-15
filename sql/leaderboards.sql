@@ -4,4 +4,4 @@ CREATE TABLE `leaderboards` (
   `gamespace_id` int(11) unsigned NOT NULL,
   `leaderboard_sort_order` enum('asc','desc') NOT NULL DEFAULT 'asc',
   PRIMARY KEY (`leaderboard_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
