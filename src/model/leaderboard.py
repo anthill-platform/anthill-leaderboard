@@ -4,7 +4,8 @@ import ujson
 from tornado.gen import coroutine, Return
 
 from common.model import Model
-from common.cluster import Cluster, NoClusterError
+from common.database import DatabaseError
+from common.cluster import Cluster, NoClusterError, ClusterError
 from common.options import options
 
 import logging
@@ -16,11 +17,12 @@ class LeaderboardAdapter(object):
 
 
 class LeaderboardError(Exception):
-    def __init__(self, message):
+    def __init__(self, code, message):
+        self.code = code
         self.message = message
 
     def __str__(self):
-        return self.message
+        return str(self.message) + ": " + self.message
 
 
 class LeaderboardNotFound(Exception):
@@ -60,20 +62,24 @@ class LeaderboardsModel(Model):
         return ["records_expiration"]
 
     @coroutine
-    def delete_entry(self, leaderboard_name, gamespace_id, user_id, sort_order):
+    def delete_entry(self, leaderboard_name, gamespace_id, account_id, sort_order):
         with (yield self.db.acquire()) as db:
 
-            brd = yield self.find_leaderboard(
-                leaderboard_name,
-                gamespace_id,
-                sort_order,
-                db)
+            leaderboard = yield self.find_leaderboard(
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
 
             yield db.execute(
                 """
                     DELETE FROM `records`
                     WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s;
-                """, brd.leaderboard_id, user_id, gamespace_id)
+                """, leaderboard.leaderboard_id, account_id, gamespace_id)
+
+            if LeaderboardsModel.is_clustered(leaderboard_name):
+                try:
+                    yield self.cluster.leave_cluster(gamespace_id, account_id, leaderboard.leaderboard_id)
+                except ClusterError as e:
+                    raise LeaderboardError(500, e.message)
 
     @coroutine
     def delete_leaderboard(self, leaderboard_id, gamespace_id):
@@ -91,11 +97,11 @@ class LeaderboardsModel(Model):
                     WHERE `leaderboard_id` = %s AND `gamespace_id` = %s;
                 """, leaderboard_id, gamespace_id)
 
-            yield self.cluster.delete_clusters(
+            yield self.cluster.delete_clusters_db(
                 gamespace_id, leaderboard_id, db=db)
 
     @coroutine
-    def find_leaderboard(self, leaderboard_name, gamespace_id, sort_order, db=None):
+    def find_leaderboard(self, gamespace_id, leaderboard_name, sort_order, db=None):
 
         leaderboard = yield (db or self.db).get(
             """
@@ -116,10 +122,8 @@ class LeaderboardsModel(Model):
         limit = int(limit)
         with (yield self.db.acquire()) as db:
             brd = yield self.find_leaderboard(
-                leaderboard_name,
-                gamespace_id,
-                sort_order,
-                db)
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
 
             user_score = yield db.get(
                 """
@@ -172,10 +176,8 @@ class LeaderboardsModel(Model):
 
         with (yield self.db.acquire()) as db:
             brd = yield self.find_leaderboard(
-                leaderboard_name,
-                gamespace_id,
-                sort_order,
-                db)
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
 
             records = yield db.query(
                 """
@@ -197,22 +199,25 @@ class LeaderboardsModel(Model):
     def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order, limit):
 
         with (yield self.db.acquire()) as db:
-            brd = yield self.find_leaderboard(leaderboard_name, gamespace_id, sort_order, db)
+            leaderboard = yield self.find_leaderboard(
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
 
             if not LeaderboardsModel.is_clustered(leaderboard_name):
                 data = yield self.list_top_records_cluster(
-                    brd.leaderboard_id, gamespace_id, 0, sort_order, 0, limit)
+                    leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, limit)
 
                 raise Return([data])
 
-            clusters = yield self.cluster.list_clusters(gamespace_id, brd.leaderboard_id, db)
+            clusters = yield self.cluster.list_clusters(
+                gamespace_id, leaderboard.leaderboard_id, db)
 
             clusters_data = []
 
             for cluster_id in clusters:
                 try:
                     data = yield self.list_top_records_cluster(
-                        brd.leaderboard_id, gamespace_id,
+                        leaderboard.leaderboard_id, gamespace_id,
                         cluster_id, sort_order, 0, limit)
                 except Exception:
                     logging.exception("Error during requesting top clusters")
@@ -224,45 +229,50 @@ class LeaderboardsModel(Model):
     @coroutine
     def list_top_records_cluster(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
         with (yield self.db.acquire()) as db:
-
-            records = yield db.query(
-                """
-                    SELECT `account_id` AS `user`, `display_name`, `score`, `profile`
-                    FROM `records`
-                    WHERE `gamespace_id`=%s AND `leaderboard_id`=%s AND `cluster_id`=%s
-                    ORDER BY score {0}
-                    LIMIT %s, %s;
-                """.format(sort_order.upper()),
-                gamespace_id, leaderboard_id, cluster_id, int(offset), int(limit))
-
-            raise Return({
-                "entries": len(records),
-                "data": LeaderboardsModel.render_records(records)
-            })
+            try:
+                records = yield db.query(
+                    """
+                        SELECT `account_id` AS `user`, `display_name`, `score`, `profile`
+                        FROM `records`
+                        WHERE `gamespace_id`=%s AND `leaderboard_id`=%s AND `cluster_id`=%s
+                        ORDER BY score {0}
+                        LIMIT %s, %s;
+                    """.format(sort_order.upper()),
+                    gamespace_id, leaderboard_id, cluster_id, int(offset), int(limit))
+            except DatabaseError as e:
+                raise LeaderboardError(500, "Failed to get top records: " + e.args[1])
+            else:
+                raise Return({
+                    "entries": len(records),
+                    "data": LeaderboardsModel.render_records(records)
+                })
 
     @coroutine
     def list_top_records(self, leaderboard_name, gamespace_id, account_id, sort_order, offset, limit):
         with (yield self.db.acquire()) as db:
 
-            brd = yield self.find_leaderboard(leaderboard_name, gamespace_id, sort_order, db)
+            leaderboard = yield self.find_leaderboard(
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
 
             if LeaderboardsModel.is_clustered(leaderboard_name):
                 try:
                     cluster_id = yield self.cluster.get_cluster(
-                        gamespace_id, account_id, brd.leaderboard_id, self.cluster_size, auto_create=False)
+                        gamespace_id, account_id, leaderboard.leaderboard_id,
+                        cluster_size=self.cluster_size, auto_create=False)
                 except NoClusterError:
                     raise LeaderboardNotFound(leaderboard_name)
             else:
                 cluster_id = 0
 
             result = yield self.list_top_records_cluster(
-                brd.leaderboard_id, gamespace_id, cluster_id,
+                leaderboard.leaderboard_id, gamespace_id, cluster_id,
                 sort_order, offset, limit)
 
             raise Return(result)
 
     @coroutine
-    def insert_record(self, account_id, leaderboard_id, gamespace_id,
+    def insert_record(self, gamespace_id, leaderboard_id, account_id,
                       time_to_live, profile, score, display_name, cluster_id=0, db=None):
 
         result = yield (db or self.db).insert(
@@ -291,86 +301,75 @@ class LeaderboardsModel(Model):
         ]
 
     @coroutine
-    def set_top_entries(self, leaderboard_name, gamespace_id, user_id, display_name,
-                        sort_order, score, time_to_live, profile):
+    def add_entry(self, gamespace_id, leaderboard_name, sort_order, account_id,
+                  display_name, score, time_to_live, profile):
 
         clustered = LeaderboardsModel.is_clustered(leaderboard_name)
 
         with (yield self.db.acquire()) as db:
-
             try:
-                brd = yield self.find_leaderboard(
-                    leaderboard_name,
-                    gamespace_id,
-                    sort_order,
-                    db)
 
-            except LeaderboardNotFound:
-                leaderboard_id = yield db.insert(
-                    """
-                        INSERT INTO `leaderboards`
-                        (`leaderboard_name`, `gamespace_id`, `leaderboard_sort_order`)
-                        VALUES (%s, %s, %s);
-                    """, leaderboard_name, gamespace_id, sort_order)
+                try:
+                    leaderboard = yield self.find_leaderboard(
+                        gamespace_id, leaderboard_name,
+                        sort_order, db=db)
 
-                if clustered:
-                    cluster_id = yield self.cluster.get_cluster(
-                        gamespace_id, user_id, leaderboard_id, self.cluster_size)
-                else:
-                    cluster_id = 0
-
-                yield self.insert_record(
-                    user_id,
-                    leaderboard_id,
-                    gamespace_id,
-                    time_to_live,
-                    profile,
-                    score,
-                    display_name,
-                    cluster_id=cluster_id,
-                    db=db
-                )
-            else:
-
-                if clustered:
-                    cluster_id = yield self.cluster.get_cluster(
-                        gamespace_id, user_id, brd.leaderboard_id, self.cluster_size)
-                else:
-                    cluster_id = 0
-
-                record = yield db.get(
-                    """
-                        SELECT *
-                        FROM `records`
-                        WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s AND `cluster_id`=%s;
-                    """,
-                    brd.leaderboard_id,
-                    user_id,
-                    gamespace_id,
-                    cluster_id
-                )
-
-                if not record:
-                    yield self.insert_record(
-                        user_id,
-                        brd.leaderboard_id,
-                        gamespace_id,
-                        time_to_live,
-                        profile,
-                        score,
-                        display_name,
-                        cluster_id=cluster_id,
-                        db=db
-                    )
-                else:
-                    yield db.execute(
+                except LeaderboardNotFound:
+                    leaderboard_id = yield db.insert(
                         """
-                            UPDATE `records`
-                            SET `expire_at`=NOW() + INTERVAL %s SECOND, `profile`=%s,
-                                `score`=%s, `display_name`=%s
+                            INSERT INTO `leaderboards`
+                            (`leaderboard_name`, `gamespace_id`, `leaderboard_sort_order`)
+                            VALUES (%s, %s, %s);
+                        """, leaderboard_name, gamespace_id, sort_order)
+
+                    if clustered:
+                        cluster_id = yield self.cluster.get_cluster(
+                            gamespace_id, account_id, leaderboard_id,
+                            cluster_size=self.cluster_size, auto_create=True)
+                    else:
+                        cluster_id = 0
+
+                    yield self.insert_record(
+                        gamespace_id, leaderboard_id, account_id,
+                        time_to_live, profile, score, display_name,
+                        cluster_id=cluster_id, db=db)
+                else:
+
+                    if clustered:
+                        cluster_id = yield self.cluster.get_cluster(
+                            gamespace_id, account_id, leaderboard.leaderboard_id,
+                            cluster_size=self.cluster_size, auto_create=True)
+                    else:
+                        cluster_id = 0
+
+                    record = yield db.get(
+                        """
+                            SELECT *
+                            FROM `records`
                             WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s AND `cluster_id`=%s;
                         """,
-                        time_to_live, ujson.dumps(profile),
-                        score, display_name, brd.leaderboard_id, user_id, gamespace_id, cluster_id)
+                        leaderboard.leaderboard_id,
+                        account_id,
+                        gamespace_id,
+                        cluster_id
+                    )
 
+                    if not record:
+                        yield self.insert_record(
+                            gamespace_id, leaderboard.leaderboard_id, account_id,
+                            time_to_live, profile, score, display_name,
+                            cluster_id=cluster_id, db=db
+                        )
+                    else:
+                        yield db.execute(
+                            """
+                                UPDATE `records`
+                                SET `expire_at`=NOW() + INTERVAL %s SECOND, `profile`=%s,
+                                    `score`=%s, `display_name`=%s
+                                WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s AND `cluster_id`=%s;
+                            """,
+                            time_to_live, ujson.dumps(profile),
+                            score, display_name, leaderboard.leaderboard_id, account_id, gamespace_id, cluster_id)
+            except DatabaseError as e:
+                raise LeaderboardError(500, "Failed add entry: " + e.args[1])
         raise Return("OK")

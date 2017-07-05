@@ -21,17 +21,13 @@ class InternalHandler(object):
 
         try:
             leaderboard_id = yield leaderboards.find_leaderboard(
-                leaderboard_name,
-                gamespace,
-                sort_order)
-
+                gamespace, leaderboard_name, sort_order)
         except LeaderboardNotFound:
-            pass
+            raise InternalError(404, "No such leaderboard")
 
         else:
             yield leaderboards.delete_leaderboard(
-                leaderboard_id,
-                gamespace)
+                gamespace, leaderboard_id)
 
         raise Return("OK")
 
@@ -40,9 +36,9 @@ class InternalHandler(object):
 
         leaderboards = self.application.leaderboards
 
-        response = yield leaderboards.set_top_entries(
-            leaderboard_name, gamespace, account,
-            display_name, sort_order, score, expire_in, profile)
+        response = yield leaderboards.add_entry(
+            gamespace, leaderboard_name, sort_order, account,
+            display_name, score, expire_in, profile)
 
         raise Return(response)
 
@@ -75,12 +71,8 @@ class LeaderboardAroundMeHandler(AuthenticatedHandler):
                 AccessToken.GAMESPACE)
 
             leaderboard_records = yield leaderboards.list_around_me_records(
-                account_id,
-                leaderboard_id,
-                gamespace_id,
-                sort_order,
-                offset,
-                limit) or {}
+                account_id, leaderboard_id, gamespace_id,
+                sort_order, offset, limit) or {}
 
         except LeaderboardNotFound:
             raise HTTPError(
@@ -91,6 +83,10 @@ class LeaderboardAroundMeHandler(AuthenticatedHandler):
 
 
 class LeaderboardEntryHandler(AuthenticatedHandler):
+
+    def options(self, *args, **kwargs):
+        self.set_header("Access-Control-Allow-Methods", "POST,DELETE,OPTIONS")
+
     @coroutine
     @scoped()
     def delete(self, sort_order, leaderboard_id):
@@ -102,10 +98,8 @@ class LeaderboardEntryHandler(AuthenticatedHandler):
                 AccessToken.GAMESPACE)
 
             yield leaderboards.delete_entry(
-                leaderboard_id,
-                gamespace_id,
-                account_id,
-                sort_order)
+                leaderboard_id, gamespace_id,
+                account_id, sort_order)
 
         except LeaderboardNotFound:
             raise HTTPError(
@@ -129,12 +123,9 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
 
             if user_friends:
                 leaderboard_records = yield self.application.leaderboards.list_friends_records(
-                    user_friends,
-                    leaderboard_id,
-                    gamespace_id,
-                    sort_order,
-                    offset,
-                    limit)
+                    user_friends, leaderboard_id,
+                    gamespace_id, sort_order,
+                    offset, limit)
             else:
                 leaderboard_records = {}
 
@@ -160,12 +151,9 @@ class LeaderboardTopHandler(AuthenticatedHandler):
                 AccessToken.GAMESPACE)
 
             leaderboard_records = yield leaderboards.list_top_records(
-                leaderboard_name,
-                gamespace_id,
-                account_id,
-                sort_order,
-                offset,
-                limit)
+                leaderboard_name, gamespace_id,
+                account_id, sort_order,
+                offset, limit)
 
         except LeaderboardNotFound:
             raise HTTPError(
@@ -201,12 +189,6 @@ class LeaderboardTopHandler(AuthenticatedHandler):
         gamespace_id = self.current_user.token.get(
             AccessToken.GAMESPACE)
 
-        yield leaderboards.set_top_entries(
-            leaderboard_name,
-            gamespace_id,
-            account_id,
-            display_name,
-            sort_order,
-            score,
-            expire_in,
-            profile)
+        yield leaderboards.add_entry(
+            gamespace_id, leaderboard_name, sort_order, account_id,
+            display_name, score, expire_in, profile)
