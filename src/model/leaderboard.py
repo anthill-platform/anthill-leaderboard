@@ -16,6 +16,25 @@ class LeaderboardAdapter(object):
         self.leaderboard_id = data.get("leaderboard_id")
 
 
+class RecordAdapter(object):
+    def __init__(self, data, rank):
+        self.account = data.get("account_id")
+        self.cluster_id = data.get("cluster_id")
+        self.score = data.get("score")
+        self.name = data.get("display_name")
+        self.profile = data.get("profile", {})
+        self.rank = rank
+
+    def dump(self):
+        return {
+            "rank": self.rank,
+            "score": self.score,
+            "account": self.account,
+            "display_name": self.name,
+            "profile": self.profile
+        }
+
+
 class LeaderboardError(Exception):
     def __init__(self, code, message):
         self.code = code
@@ -139,13 +158,13 @@ class LeaderboardsModel(Model):
 
             records = yield db.query(
                 """
-                    (SELECT `account_id` AS user, `display_name`, `score`, `profile`
+                    (SELECT `account_id`, `display_name`, `score`, `profile`
                         FROM `records`
                         WHERE `leaderboard_id`=%s AND `gamespace_id`=%s AND `score`<%s
                         ORDER BY `score` DESC
                         LIMIT %s)
                     UNION
-                    (SELECT `account_id` AS user, `display_name`, `score`, `profile`
+                    (SELECT `account_id`, `display_name`, `score`, `profile`
                         FROM `records`
                         WHERE `leaderboard_id`=%s AND `gamespace_id`=%s AND `score` >= %s
                         ORDER BY `score` ASC
@@ -166,33 +185,27 @@ class LeaderboardsModel(Model):
                 offset,
                 limit)
 
-            raise Return({
-                "entries": len(records),
-                "data": LeaderboardsModel.render_records(records)
-            })
+            raise Return(map(RecordAdapter, records))
 
     @coroutine
     def list_friends_records(self, friends_ids, leaderboard_name, gamespace_id, sort_order, offset, limit):
 
         with (yield self.db.acquire()) as db:
-            brd = yield self.find_leaderboard(
+            leaderboard = yield self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
             records = yield db.query(
                 """
-                    SELECT `account_id` AS user, `display_name`, `score`, `profile`
+                    SELECT `account_id`, `display_name`, `score`, `profile`
                     FROM `records`
                     WHERE `leaderboard_id`=%s AND `gamespace_id`=%s AND `account_id` IN %s
                     ORDER BY `score` {0}
                     LIMIT %s, %s;
                 """.format(sort_order.upper()),
-                brd.leaderboard_id, gamespace_id, friends_ids, offset, limit)
+                leaderboard.leaderboard_id, gamespace_id, friends_ids, offset, limit)
 
-            raise Return({
-                "entries": len(records),
-                "data": LeaderboardsModel.render_records(records)
-            })
+            raise Return(map(RecordAdapter, records))
 
     # noinspection PyBroadException
     @coroutine
@@ -207,24 +220,22 @@ class LeaderboardsModel(Model):
                 data = yield self.list_top_records_cluster(
                     leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, limit)
 
-                raise Return([data])
+                raise Return({
+                    0: data
+                })
 
-            clusters = yield self.cluster.list_clusters(
+            cluster_ids = yield self.cluster.list_clusters(
                 gamespace_id, leaderboard.leaderboard_id, db)
 
-            clusters_data = []
+            try:
+                data = yield self.list_top_records_clusters(
+                    leaderboard.leaderboard_id, gamespace_id,
+                    cluster_ids, sort_order, 0, limit)
+            except Exception:
+                logging.exception("Error during requesting top clusters")
+                return
 
-            for cluster_id in clusters:
-                try:
-                    data = yield self.list_top_records_cluster(
-                        leaderboard.leaderboard_id, gamespace_id,
-                        cluster_id, sort_order, 0, limit)
-                except Exception:
-                    logging.exception("Error during requesting top clusters")
-                else:
-                    clusters_data.append(data)
-
-            raise Return(clusters_data)
+            raise Return(data)
 
     @coroutine
     def list_top_records_cluster(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
@@ -242,10 +253,41 @@ class LeaderboardsModel(Model):
             except DatabaseError as e:
                 raise LeaderboardError(500, "Failed to get top records: " + e.args[1])
             else:
-                raise Return({
-                    "entries": len(records),
-                    "data": LeaderboardsModel.render_records(records)
-                })
+                raise Return(map(RecordAdapter, records))
+
+    @coroutine
+    def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order, offset, limit):
+
+        if not cluster_ids:
+            raise LeaderboardError(400, "Empty cluster_ids")
+
+        with (yield self.db.acquire()) as db:
+            try:
+                records = yield db.query(
+                    """
+                        SELECT `account_id`, `display_name`, `score`, `profile`, `cluster_id`
+                        FROM `records`
+                        WHERE `gamespace_id`=%s AND `leaderboard_id`=%s AND `cluster_id` IN %s
+                        ORDER BY `score` {0}
+                        LIMIT %s, %s;
+                    """.format(sort_order.upper()),
+                    gamespace_id, leaderboard_id, cluster_ids, int(offset), int(limit))
+            except DatabaseError as e:
+                raise LeaderboardError(500, "Failed to get top records: " + e.args[1])
+            else:
+
+                result = {}
+
+                for record in records:
+                    cluster_id = record["cluster_id"]
+
+                    try:
+                        existing = result[cluster_id]
+                        existing.append(RecordAdapter(record, len(existing) + 1))
+                    except KeyError:
+                        result[cluster_id] = [RecordAdapter(record, 1)]
+
+                raise Return(result)
 
     @coroutine
     def list_top_records(self, leaderboard_name, gamespace_id, account_id, sort_order, offset, limit):
@@ -286,19 +328,6 @@ class LeaderboardsModel(Model):
             ujson.dumps(profile), score, display_name, cluster_id)
 
         raise Return(result)
-
-    @staticmethod
-    def render_records(leaderboard_data):
-        return [
-            {
-                "account": record["user"],
-                "rank": rank,
-                "score": record["score"],
-                "display_name": record["display_name"],
-                "profile": record["profile"] if isinstance(record["profile"], dict) else ujson.loads(record["profile"])
-            }
-            for rank, record in enumerate(leaderboard_data, start=1)
-        ]
 
     @coroutine
     def add_entry(self, gamespace_id, leaderboard_name, sort_order, account_id,

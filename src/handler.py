@@ -48,12 +48,21 @@ class InternalHandler(object):
         leaderboards = self.application.leaderboards
 
         try:
-            response = yield leaderboards.list_top_all_clusters(
+            data = yield leaderboards.list_top_all_clusters(
                 leaderboard_name, gamespace, sort_order, limit)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
-        raise Return(response)
+        raise Return({
+            cluster_id: {
+                "entries": len(cluster),
+                "data": [
+                    item.dump()
+                    for item in cluster
+                ]
+            }
+            for cluster_id, cluster in data.iteritems()
+        })
 
 
 class LeaderboardAroundMeHandler(AuthenticatedHandler):
@@ -79,7 +88,13 @@ class LeaderboardAroundMeHandler(AuthenticatedHandler):
                 404, "Leaderboard '%s' was not found." % leaderboard_id)
 
         else:
-            self.dumps(leaderboard_records)
+            self.dumps({
+                "entries": len(leaderboard_records),
+                "data": [
+                    record.dump()
+                    for record in leaderboard_records
+                ]
+            })
 
 
 class LeaderboardEntryHandler(AuthenticatedHandler):
@@ -127,13 +142,19 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
                     gamespace_id, sort_order,
                     offset, limit)
             else:
-                leaderboard_records = {}
+                leaderboard_records = []
 
         except LeaderboardNotFound:
             raise HTTPError(
                 404, "Leaderboard '%s' was not found." % leaderboard_id)
         else:
-            self.dumps(leaderboard_records)
+            self.dumps({
+                "entries": len(leaderboard_records),
+                "data": [
+                    record.dump()
+                    for record in leaderboard_records
+                ]
+            })
 
 
 class LeaderboardTopHandler(AuthenticatedHandler):
@@ -160,7 +181,13 @@ class LeaderboardTopHandler(AuthenticatedHandler):
                 404, "Leaderboard '%s' was not found." % leaderboard_name)
 
         else:
-            self.dumps(leaderboard_records)
+            self.dumps({
+                "entries": len(leaderboard_records),
+                "data": [
+                    record.dump()
+                    for record in leaderboard_records
+                ]
+            })
 
     @coroutine
     @scoped()
