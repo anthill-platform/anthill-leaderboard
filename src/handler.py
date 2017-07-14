@@ -167,7 +167,8 @@ class LeaderboardTopHandler(AuthenticatedHandler):
             offset = self.get_argument("offset", 0)
             limit = self.get_argument("limit", self.application.limit)
 
-            account_id = self.current_user.token.account
+            account_id = self.get_argument("arbitrary_account", self.current_user.token.account)
+
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
@@ -181,13 +182,15 @@ class LeaderboardTopHandler(AuthenticatedHandler):
                 404, "Leaderboard '%s' was not found." % leaderboard_name)
 
         else:
-            self.dumps({
+            result = {
                 "entries": len(leaderboard_records),
                 "data": [
                     record.dump()
                     for record in leaderboard_records
                 ]
-            })
+            }
+
+            self.dumps(result)
 
     @coroutine
     @scoped()

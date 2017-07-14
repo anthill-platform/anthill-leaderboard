@@ -243,7 +243,7 @@ class LeaderboardsModel(Model):
             try:
                 records = yield db.query(
                     """
-                        SELECT `account_id` AS `user`, `display_name`, `score`, `profile`
+                        SELECT `account_id`, `display_name`, `score`, `profile`
                         FROM `records`
                         WHERE `gamespace_id`=%s AND `leaderboard_id`=%s AND `cluster_id`=%s
                         ORDER BY score {0}
@@ -253,7 +253,13 @@ class LeaderboardsModel(Model):
             except DatabaseError as e:
                 raise LeaderboardError(500, "Failed to get top records: " + e.args[1])
             else:
-                raise Return(map(RecordAdapter, records))
+
+                result = [
+                    RecordAdapter(data, index)
+                    for index, data in enumerate(records, start=1)
+                ]
+
+                raise Return(result)
 
     @coroutine
     def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order, offset, limit):
