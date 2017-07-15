@@ -209,7 +209,7 @@ class LeaderboardsModel(Model):
 
     # noinspection PyBroadException
     @coroutine
-    def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order, limit):
+    def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order):
 
         with (yield self.db.acquire()) as db:
             leaderboard = yield self.find_leaderboard(
@@ -218,7 +218,7 @@ class LeaderboardsModel(Model):
 
             if not LeaderboardsModel.is_clustered(leaderboard_name):
                 data = yield self.list_top_records_cluster(
-                    leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, limit)
+                    leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, 1000)
 
                 raise Return({
                     0: data
@@ -230,7 +230,7 @@ class LeaderboardsModel(Model):
             try:
                 data = yield self.list_top_records_clusters(
                     leaderboard.leaderboard_id, gamespace_id,
-                    cluster_ids, sort_order, 0, limit)
+                    cluster_ids, sort_order)
             except Exception:
                 logging.exception("Error during requesting top clusters")
                 return
@@ -262,7 +262,7 @@ class LeaderboardsModel(Model):
                 raise Return(result)
 
     @coroutine
-    def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order, offset, limit):
+    def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order):
 
         if not cluster_ids:
             raise LeaderboardError(400, "Empty cluster_ids")
@@ -274,10 +274,9 @@ class LeaderboardsModel(Model):
                         SELECT `account_id`, `display_name`, `score`, `profile`, `cluster_id`
                         FROM `records`
                         WHERE `gamespace_id`=%s AND `leaderboard_id`=%s AND `cluster_id` IN %s
-                        ORDER BY `score` {0}
-                        LIMIT %s, %s;
+                        ORDER BY `score` {0};
                     """.format(sort_order.upper()),
-                    gamespace_id, leaderboard_id, cluster_ids, int(offset), int(limit))
+                    gamespace_id, leaderboard_id, cluster_ids)
             except DatabaseError as e:
                 raise LeaderboardError(500, "Failed to get top records: " + e.args[1])
             else:

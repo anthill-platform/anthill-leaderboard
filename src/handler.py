@@ -43,13 +43,13 @@ class InternalHandler(object):
         raise Return(response)
 
     @coroutine
-    def get_top(self, gamespace, sort_order, leaderboard_name, limit=1000):
+    def get_top(self, gamespace, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
         try:
             data = yield leaderboards.list_top_all_clusters(
-                leaderboard_name, gamespace, sort_order, limit)
+                leaderboard_name, gamespace, sort_order)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
