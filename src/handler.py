@@ -43,7 +43,46 @@ class InternalHandler(object):
         raise Return(response)
 
     @coroutine
-    def get_top(self, gamespace, sort_order, leaderboard_name):
+    def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
+
+        leaderboards = self.application.leaderboards
+
+        try:
+            data = yield leaderboards.list_top_records(
+                leaderboard_name, gamespace, sort_order, offset=offset, limit=limit)
+        except LeaderboardNotFound:
+            raise InternalError(404, "No such leaderboard")
+
+        raise Return({
+            "entries": len(data),
+            "data": [
+                item.dump()
+                for item in data
+            ]
+        })
+
+    @coroutine
+    def get_top_account(self, gamespace, account_id, sort_order, leaderboard_name, offset=0, limit=1000):
+
+        leaderboards = self.application.leaderboards
+
+        try:
+            data = yield leaderboards.list_top_records_account(
+                leaderboard_name, gamespace, account_id,
+                sort_order, offset=offset, limit=limit)
+        except LeaderboardNotFound:
+            raise InternalError(404, "No such leaderboard")
+
+        raise Return({
+            "entries": len(data),
+            "data": [
+                item.dump()
+                for item in data
+            ]
+        })
+
+    @coroutine
+    def get_top_all_clusters(self, gamespace, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
@@ -172,7 +211,7 @@ class LeaderboardTopHandler(AuthenticatedHandler):
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
-            leaderboard_records = yield leaderboards.list_top_records(
+            leaderboard_records = yield leaderboards.list_top_records_account(
                 leaderboard_name, gamespace_id,
                 account_id, sort_order,
                 offset, limit)

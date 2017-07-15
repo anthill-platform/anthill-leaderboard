@@ -217,7 +217,7 @@ class LeaderboardsModel(Model):
                 sort_order, db=db)
 
             if not LeaderboardsModel.is_clustered(leaderboard_name):
-                data = yield self.list_top_records_cluster(
+                data = yield self.__list_top_records_cluster__(
                     leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, 1000)
 
                 raise Return({
@@ -238,7 +238,7 @@ class LeaderboardsModel(Model):
             raise Return(data)
 
     @coroutine
-    def list_top_records_cluster(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
+    def __list_top_records_cluster__(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
         with (yield self.db.acquire()) as db:
             try:
                 records = yield db.query(
@@ -295,7 +295,7 @@ class LeaderboardsModel(Model):
                 raise Return(result)
 
     @coroutine
-    def list_top_records(self, leaderboard_name, gamespace_id, account_id, sort_order, offset, limit):
+    def list_top_records_account(self, leaderboard_name, gamespace_id, account_id, sort_order, offset=0, limit=1000):
         with (yield self.db.acquire()) as db:
 
             leaderboard = yield self.find_leaderboard(
@@ -312,7 +312,26 @@ class LeaderboardsModel(Model):
             else:
                 cluster_id = 0
 
-            result = yield self.list_top_records_cluster(
+            result = yield self.__list_top_records_cluster__(
+                leaderboard.leaderboard_id, gamespace_id, cluster_id,
+                sort_order, offset, limit)
+
+            raise Return(result)
+
+    @coroutine
+    def list_top_records(self, leaderboard_name, gamespace_id, sort_order, offset=0, limit=1000):
+        with (yield self.db.acquire()) as db:
+
+            leaderboard = yield self.find_leaderboard(
+                gamespace_id, leaderboard_name,
+                sort_order, db=db)
+
+            if LeaderboardsModel.is_clustered(leaderboard_name):
+                raise LeaderboardNotFound(leaderboard_name)
+            else:
+                cluster_id = 0
+
+            result = yield self.__list_top_records_cluster__(
                 leaderboard.leaderboard_id, gamespace_id, cluster_id,
                 sort_order, offset, limit)
 
