@@ -7,6 +7,5 @@ CREATE TABLE `leaderboard_cluster_accounts` (
   UNIQUE KEY `account_id` (`account_id`,`gamespace_id`,`cluster_id`),
   KEY `cluster_id` (`cluster_id`),
   KEY `account_id_2` (`account_id`),
-  KEY `cluster_id_2` (`cluster_id`),
   CONSTRAINT `leaderboard_cluster_accounts_ibfk_1` FOREIGN KEY (`cluster_id`) REFERENCES `leaderboard_clusters` (`cluster_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
