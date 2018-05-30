@@ -80,6 +80,37 @@ class LeaderboardsModel(Model):
     def get_setup_events(self):
         return ["records_expiration"]
 
+    def has_delete_account_event(self):
+        return True
+
+    @coroutine
+    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+
+        if gamespace_only:
+            with (yield self.db.acquire()) as db:
+                yield db.execute("""
+                    DELETE 
+                    FROM `leaderboard_cluster_accounts`
+                    WHERE `gamespace_id`=%s AND `account_id` IN %s;
+                """, gamespace, accounts)
+                yield db.execute("""
+                    DELETE 
+                    FROM `records`
+                    WHERE `gamespace_id`=%s AND `account_id` IN %s;
+                """, gamespace, accounts)
+        else:
+            with (yield self.db.acquire()) as db:
+                yield db.execute("""
+                    DELETE 
+                    FROM `leaderboard_cluster_accounts`
+                    WHERE `account_id` IN %s;
+                """, accounts)
+                yield db.execute("""
+                    DELETE 
+                    FROM `records`
+                    WHERE `account_id` IN %s;
+                """, accounts)
+
     @coroutine
     def delete_entry(self, leaderboard_name, gamespace_id, account_id, sort_order):
         with (yield self.db.acquire()) as db:
