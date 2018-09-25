@@ -1,29 +1,20 @@
 
-from tornado.gen import coroutine
-from common.options import options
+from anthill.common.options import options
+from anthill.common import server, discover, database, access, sign, keyvalue
 
-import handler as h
-import admin
-
-import common.server
-import common.discover
-import common.database
-import common.access
-import common.sign
-import common.keyvalue
-
-from model.leaderboard import LeaderboardsModel
-from model.social import  SocialModel
-
-import options as _opts
+from . import handler as h
+from . import admin
+from . model.leaderboard import LeaderboardsModel
+from . model.social import SocialModel
+from . import options as _opts
 
 
-class LeaderboardServer(common.server.Server):
+class LeaderboardServer(server.Server):
     # noinspection PyShadowingNames
     def __init__(self):
         super(LeaderboardServer, self).__init__()
 
-        self.db = common.database.Database(
+        self.db = database.Database(
             host=options.db_host,
             database=options.db_name,
             user=options.db_username,
@@ -61,13 +52,13 @@ class LeaderboardServer(common.server.Server):
             "index": admin.RootAdminController
         }
 
-    @coroutine
-    def started(self, *args, **kwargs):
-        yield super(LeaderboardServer, self).started(*args, **kwargs)
+    async def started(self):
+        await super(LeaderboardServer, self).started()
 
         self.social_service = SocialModel()
 
+
 if __name__ == "__main__":
-    stt = common.server.init()
-    common.access.AccessToken.init([common.access.public()])
-    common.server.start(LeaderboardServer)
+    stt = server.init()
+    access.AccessToken.init([access.public()])
+    server.start(LeaderboardServer)

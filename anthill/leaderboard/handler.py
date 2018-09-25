@@ -1,98 +1,92 @@
 
-import ujson
-
-from tornado.gen import coroutine, Return
 from tornado.web import HTTPError
 
-from common.access import scoped, AccessToken, InternalError
-from common.handler import AuthenticatedHandler
+from anthill.common.access import scoped, AccessToken, InternalError
+from anthill.common.handler import AuthenticatedHandler
 
-from model.leaderboard import LeaderboardNotFound
+from . model.leaderboard import LeaderboardNotFound
+
+import ujson
 
 
 class InternalHandler(object):
     def __init__(self, application):
         self.application = application
 
-    @coroutine
-    def delete(self, gamespace, sort_order, leaderboard_name):
+    async def delete(self, gamespace, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
         try:
-            leaderboard_id = yield leaderboards.find_leaderboard(
+            leaderboard_id = await leaderboards.find_leaderboard(
                 gamespace, leaderboard_name, sort_order)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
         else:
-            yield leaderboards.delete_leaderboard(
+            await leaderboards.delete_leaderboard(
                 gamespace, leaderboard_id)
 
-        raise Return("OK")
+        return "OK"
 
-    @coroutine
-    def post(self, account, gamespace, sort_order, leaderboard_name, score, display_name, expire_in, profile):
+    async def post(self, account, gamespace, sort_order, leaderboard_name, score, display_name, expire_in, profile):
 
         leaderboards = self.application.leaderboards
 
-        response = yield leaderboards.add_entry(
+        response = await leaderboards.add_entry(
             gamespace, leaderboard_name, sort_order, account,
             display_name, score, expire_in, profile)
 
-        raise Return(response)
+        return response
 
-    @coroutine
-    def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
+    async def get_top(self, gamespace, sort_order, leaderboard_name, offset=0, limit=1000):
 
         leaderboards = self.application.leaderboards
 
         try:
-            data = yield leaderboards.list_top_records(
+            data = await leaderboards.list_top_records(
                 leaderboard_name, gamespace, sort_order, offset=offset, limit=limit)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
-        raise Return({
+        return {
             "entries": len(data),
             "data": [
                 item.dump()
                 for item in data
             ]
-        })
+        }
 
-    @coroutine
-    def get_top_account(self, gamespace, account_id, sort_order, leaderboard_name, offset=0, limit=1000):
+    async def get_top_account(self, gamespace, account_id, sort_order, leaderboard_name, offset=0, limit=1000):
 
         leaderboards = self.application.leaderboards
 
         try:
-            data = yield leaderboards.list_top_records_account(
+            data = await leaderboards.list_top_records_account(
                 leaderboard_name, gamespace, account_id,
                 sort_order, offset=offset, limit=limit)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
-        raise Return({
+        return {
             "entries": len(data),
             "data": [
                 item.dump()
                 for item in data
             ]
-        })
+        }
 
-    @coroutine
-    def get_top_all_clusters(self, gamespace, sort_order, leaderboard_name):
+    async def get_top_all_clusters(self, gamespace, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
         try:
-            data = yield leaderboards.list_top_all_clusters(
+            data = await leaderboards.list_top_all_clusters(
                 leaderboard_name, gamespace, sort_order)
         except LeaderboardNotFound:
             raise InternalError(404, "No such leaderboard")
 
-        raise Return({
+        return {
             cluster_id: {
                 "entries": len(cluster),
                 "data": [
@@ -100,14 +94,13 @@ class InternalHandler(object):
                     for item in cluster
                 ]
             }
-            for cluster_id, cluster in data.iteritems()
-        })
+            for cluster_id, cluster in data.items()
+        }
 
 
 class LeaderboardAroundMeHandler(AuthenticatedHandler):
-    @coroutine
     @scoped()
-    def get(self, sort_order, leaderboard_id):
+    async def get(self, sort_order, leaderboard_id):
         try:
             leaderboards = self.application.leaderboards
 
@@ -118,7 +111,7 @@ class LeaderboardAroundMeHandler(AuthenticatedHandler):
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
-            leaderboard_records = yield leaderboards.list_around_me_records(
+            leaderboard_records = await leaderboards.list_around_me_records(
                 account_id, leaderboard_id, gamespace_id,
                 sort_order, offset, limit) or {}
 
@@ -141,9 +134,8 @@ class LeaderboardEntryHandler(AuthenticatedHandler):
     def options(self, *args, **kwargs):
         self.set_header("Access-Control-Allow-Methods", "POST,DELETE,OPTIONS")
 
-    @coroutine
     @scoped()
-    def delete(self, sort_order, leaderboard_id):
+    async def delete(self, sort_order, leaderboard_id):
         try:
             leaderboards = self.application.leaderboards
 
@@ -151,7 +143,7 @@ class LeaderboardEntryHandler(AuthenticatedHandler):
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
-            yield leaderboards.delete_entry(
+            await leaderboards.delete_entry(
                 leaderboard_id, gamespace_id,
                 account_id, sort_order)
 
@@ -161,9 +153,8 @@ class LeaderboardEntryHandler(AuthenticatedHandler):
 
 
 class LeaderboardFriendsHandler(AuthenticatedHandler):
-    @coroutine
     @scoped()
-    def get(self, sort_order, leaderboard_id):
+    async def get(self, sort_order, leaderboard_id):
         try:
             offset = self.get_argument("offset", 0)
             limit = self.get_argument("limit", self.application.limit)
@@ -172,11 +163,11 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
                 AccessToken.GAMESPACE)
             account_id = self.current_user.token.account
 
-            user_friends = yield self.application.social_service.list_friends(
+            user_friends = await self.application.social_service.list_friends(
                 gamespace_id, account_id, profile_fields=[])
 
             if user_friends:
-                leaderboard_records = yield self.application.leaderboards.list_friends_records(
+                leaderboard_records = await self.application.leaderboards.list_friends_records(
                     user_friends, leaderboard_id,
                     gamespace_id, sort_order,
                     offset, limit)
@@ -197,9 +188,8 @@ class LeaderboardFriendsHandler(AuthenticatedHandler):
 
 
 class LeaderboardTopHandler(AuthenticatedHandler):
-    @coroutine
     @scoped()
-    def get(self, sort_order, leaderboard_name):
+    async def get(self, sort_order, leaderboard_name):
         try:
             leaderboards = self.application.leaderboards
 
@@ -211,7 +201,7 @@ class LeaderboardTopHandler(AuthenticatedHandler):
             gamespace_id = self.current_user.token.get(
                 AccessToken.GAMESPACE)
 
-            leaderboard_records = yield leaderboards.list_top_records_account(
+            leaderboard_records = await leaderboards.list_top_records_account(
                 leaderboard_name, gamespace_id,
                 account_id, sort_order,
                 offset, limit)
@@ -231,9 +221,8 @@ class LeaderboardTopHandler(AuthenticatedHandler):
 
             self.dumps(result)
 
-    @coroutine
     @scoped()
-    def post(self, sort_order, leaderboard_name):
+    async def post(self, sort_order, leaderboard_name):
 
         leaderboards = self.application.leaderboards
 
@@ -258,6 +247,6 @@ class LeaderboardTopHandler(AuthenticatedHandler):
         gamespace_id = self.current_user.token.get(
             AccessToken.GAMESPACE)
 
-        yield leaderboards.add_entry(
+        await leaderboards.add_entry(
             gamespace_id, leaderboard_name, sort_order, account_id,
             display_name, score, expire_in, profile)

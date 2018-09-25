@@ -1,14 +1,10 @@
-
-import ujson
-
-from tornado.gen import coroutine, Return
-
-from common.model import Model
-from common.database import DatabaseError
-from common.cluster import Cluster, NoClusterError, ClusterError
-from common.options import options
+from anthill.common.model import Model
+from anthill.common.database import DatabaseError
+from anthill.common.cluster import Cluster, NoClusterError, ClusterError
+from anthill.common.options import options
 
 import logging
+import ujson
 
 
 class LeaderboardAdapter(object):
@@ -51,7 +47,6 @@ class LeaderboardNotFound(Exception):
 
 
 class LeaderboardsModel(Model):
-
     """
     Leaderboard model. Manages leaderboards itself, and user records in such leaderboards.
 
@@ -83,43 +78,41 @@ class LeaderboardsModel(Model):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
 
         if gamespace_only:
-            with (yield self.db.acquire()) as db:
-                yield db.execute("""
+            async with self.db.acquire() as db:
+                await db.execute("""
                     DELETE 
                     FROM `leaderboard_cluster_accounts`
                     WHERE `gamespace_id`=%s AND `account_id` IN %s;
                 """, gamespace, accounts)
-                yield db.execute("""
+                await db.execute("""
                     DELETE 
                     FROM `records`
                     WHERE `gamespace_id`=%s AND `account_id` IN %s;
                 """, gamespace, accounts)
         else:
-            with (yield self.db.acquire()) as db:
-                yield db.execute("""
+            async with self.db.acquire() as db:
+                await db.execute("""
                     DELETE 
                     FROM `leaderboard_cluster_accounts`
                     WHERE `account_id` IN %s;
                 """, accounts)
-                yield db.execute("""
+                await db.execute("""
                     DELETE 
                     FROM `records`
                     WHERE `account_id` IN %s;
                 """, accounts)
 
-    @coroutine
-    def delete_entry(self, leaderboard_name, gamespace_id, account_id, sort_order):
-        with (yield self.db.acquire()) as db:
+    async def delete_entry(self, leaderboard_name, gamespace_id, account_id, sort_order):
+        async with self.db.acquire() as db:
 
-            leaderboard = yield self.find_leaderboard(
+            leaderboard = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
-            yield db.execute(
+            await db.execute(
                 """
                     DELETE FROM `records`
                     WHERE `leaderboard_id`=%s AND `account_id`=%s AND `gamespace_id`=%s;
@@ -127,33 +120,31 @@ class LeaderboardsModel(Model):
 
             if LeaderboardsModel.is_clustered(leaderboard_name):
                 try:
-                    yield self.cluster.leave_cluster(gamespace_id, account_id, leaderboard.leaderboard_id)
+                    await self.cluster.leave_cluster(gamespace_id, account_id, leaderboard.leaderboard_id)
                 except ClusterError as e:
                     raise LeaderboardError(500, e.message)
 
-    @coroutine
-    def delete_leaderboard(self, leaderboard_id, gamespace_id):
+    async def delete_leaderboard(self, leaderboard_id, gamespace_id):
 
-        with (yield self.db.acquire()) as db:
-            yield db.execute(
+        async with self.db.acquire() as db:
+            await db.execute(
                 """
                     DELETE FROM `records`
                     WHERE `leaderboard_id` = %s AND `gamespace_id` = %s;
                 """, leaderboard_id, gamespace_id)
 
-            yield db.execute(
+            await db.execute(
                 """
                     DELETE FROM `leaderboards`
                     WHERE `leaderboard_id` = %s AND `gamespace_id` = %s;
                 """, leaderboard_id, gamespace_id)
 
-            yield self.cluster.delete_clusters_db(
+            await self.cluster.delete_clusters_db(
                 gamespace_id, leaderboard_id, db=db)
 
-    @coroutine
-    def find_leaderboard(self, gamespace_id, leaderboard_name, sort_order, db=None):
+    async def find_leaderboard(self, gamespace_id, leaderboard_name, sort_order, db=None):
 
-        leaderboard = yield (db or self.db).get(
+        leaderboard = await (db or self.db).get(
             """
                 SELECT `leaderboard_id`, `leaderboard_name`
                 FROM `leaderboards`
@@ -164,18 +155,17 @@ class LeaderboardsModel(Model):
         if leaderboard is None:
             raise LeaderboardNotFound(leaderboard_name)
 
-        raise Return(LeaderboardAdapter(leaderboard))
+        return LeaderboardAdapter(leaderboard)
 
-    @coroutine
-    def list_around_me_records(self, user_id, leaderboard_name, gamespace_id, sort_order, offset, limit):
+    async def list_around_me_records(self, user_id, leaderboard_name, gamespace_id, sort_order, offset, limit):
 
         limit = int(limit)
-        with (yield self.db.acquire()) as db:
-            brd = yield self.find_leaderboard(
+        async with self.db.acquire() as db:
+            brd = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
-            user_score = yield db.get(
+            user_score = await db.get(
                 """
                     SELECT `score`
                     FROM `records`
@@ -183,11 +173,11 @@ class LeaderboardsModel(Model):
                 """, brd.leaderboard_id, user_id, gamespace_id)
 
             if not user_score:
-                raise Return(None)
+                return None
 
             user_score = user_score["score"]
 
-            records = yield db.query(
+            records = await db.query(
                 """
                     (SELECT `account_id`, `display_name`, `score`, `profile`
                         FROM `records`
@@ -216,17 +206,16 @@ class LeaderboardsModel(Model):
                 offset,
                 limit)
 
-            raise Return(map(RecordAdapter, records))
+            return map(RecordAdapter, records)
 
-    @coroutine
-    def list_friends_records(self, friends_ids, leaderboard_name, gamespace_id, sort_order, offset, limit):
+    async def list_friends_records(self, friends_ids, leaderboard_name, gamespace_id, sort_order, offset, limit):
 
-        with (yield self.db.acquire()) as db:
-            leaderboard = yield self.find_leaderboard(
+        async with self.db.acquire() as db:
+            leaderboard = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
-            records = yield db.query(
+            records = await db.query(
                 """
                     SELECT `account_id`, `display_name`, `score`, `profile`
                     FROM `records`
@@ -236,43 +225,41 @@ class LeaderboardsModel(Model):
                 """.format(sort_order.upper()),
                 leaderboard.leaderboard_id, gamespace_id, friends_ids, offset, limit)
 
-            raise Return(map(RecordAdapter, records))
+            return map(RecordAdapter, records)
 
     # noinspection PyBroadException
-    @coroutine
-    def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order):
+    async def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order):
 
-        with (yield self.db.acquire()) as db:
-            leaderboard = yield self.find_leaderboard(
+        async with self.db.acquire() as db:
+            leaderboard = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
             if not LeaderboardsModel.is_clustered(leaderboard_name):
-                data = yield self.__list_top_records_cluster__(
+                data = await self.__list_top_records_cluster__(
                     leaderboard.leaderboard_id, gamespace_id, 0, sort_order, 0, 1000)
 
-                raise Return({
+                return {
                     0: data
-                })
+                }
 
-            cluster_ids = yield self.cluster.list_clusters(
+            cluster_ids = await self.cluster.list_clusters(
                 gamespace_id, leaderboard.leaderboard_id, db)
 
             try:
-                data = yield self.list_top_records_clusters(
+                data = await self.list_top_records_clusters(
                     leaderboard.leaderboard_id, gamespace_id,
                     cluster_ids, sort_order)
             except Exception:
                 logging.exception("Error during requesting top clusters")
                 return
 
-            raise Return(data)
+            return data
 
-    @coroutine
-    def __list_top_records_cluster__(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
-        with (yield self.db.acquire()) as db:
+    async def __list_top_records_cluster__(self, leaderboard_id, gamespace_id, cluster_id, sort_order, offset, limit):
+        async with self.db.acquire() as db:
             try:
-                records = yield db.query(
+                records = await db.query(
                     """
                         SELECT `account_id`, `display_name`, `score`, `profile`
                         FROM `records`
@@ -290,17 +277,16 @@ class LeaderboardsModel(Model):
                     for index, data in enumerate(records, start=1)
                 ]
 
-                raise Return(result)
+                return result
 
-    @coroutine
-    def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order):
+    async def list_top_records_clusters(self, leaderboard_id, gamespace_id, cluster_ids, sort_order):
 
         if not cluster_ids:
             raise LeaderboardError(400, "Empty cluster_ids")
 
-        with (yield self.db.acquire()) as db:
+        async with self.db.acquire() as db:
             try:
-                records = yield db.query(
+                records = await db.query(
                     """
                         SELECT `account_id`, `display_name`, `score`, `profile`, `cluster_id`
                         FROM `records`
@@ -323,19 +309,19 @@ class LeaderboardsModel(Model):
                     except KeyError:
                         result[cluster_id] = [RecordAdapter(record, 1)]
 
-                raise Return(result)
+                return result
 
-    @coroutine
-    def list_top_records_account(self, leaderboard_name, gamespace_id, account_id, sort_order, offset=0, limit=1000):
-        with (yield self.db.acquire()) as db:
+    async def list_top_records_account(self, leaderboard_name, gamespace_id,
+                                       account_id, sort_order, offset=0, limit=1000):
+        async with self.db.acquire() as db:
 
-            leaderboard = yield self.find_leaderboard(
+            leaderboard = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
             if LeaderboardsModel.is_clustered(leaderboard_name):
                 try:
-                    cluster_id = yield self.cluster.get_cluster(
+                    cluster_id = await self.cluster.get_cluster(
                         gamespace_id, account_id, leaderboard.leaderboard_id,
                         cluster_size=self.cluster_size, auto_create=False)
                 except NoClusterError:
@@ -343,17 +329,16 @@ class LeaderboardsModel(Model):
             else:
                 cluster_id = 0
 
-            result = yield self.__list_top_records_cluster__(
+            result = await self.__list_top_records_cluster__(
                 leaderboard.leaderboard_id, gamespace_id, cluster_id,
                 sort_order, offset, limit)
 
-            raise Return(result)
+            return result
 
-    @coroutine
-    def list_top_records(self, leaderboard_name, gamespace_id, sort_order, offset=0, limit=1000):
-        with (yield self.db.acquire()) as db:
+    async def list_top_records(self, leaderboard_name, gamespace_id, sort_order, offset=0, limit=1000):
+        async with self.db.acquire() as db:
 
-            leaderboard = yield self.find_leaderboard(
+            leaderboard = await self.find_leaderboard(
                 gamespace_id, leaderboard_name,
                 sort_order, db=db)
 
@@ -362,17 +347,16 @@ class LeaderboardsModel(Model):
             else:
                 cluster_id = 0
 
-            result = yield self.__list_top_records_cluster__(
+            result = await self.__list_top_records_cluster__(
                 leaderboard.leaderboard_id, gamespace_id, cluster_id,
                 sort_order, offset, limit)
 
-            raise Return(result)
+            return result
 
-    @coroutine
-    def insert_record(self, gamespace_id, leaderboard_id, account_id,
-                      time_to_live, profile, score, display_name, cluster_id=0, db=None):
+    async def insert_record(self, gamespace_id, leaderboard_id, account_id,
+                            time_to_live, profile, score, display_name, cluster_id=0, db=None):
 
-        result = yield (db or self.db).insert(
+        result = await (db or self.db).insert(
             """
                 INSERT INTO `records`
                 (`account_id`, `leaderboard_id`, `gamespace_id`, `expire_at`,
@@ -382,24 +366,23 @@ class LeaderboardsModel(Model):
             account_id, leaderboard_id, gamespace_id, time_to_live,
             ujson.dumps(profile), score, display_name, cluster_id)
 
-        raise Return(result)
+        return result
 
-    @coroutine
-    def add_entry(self, gamespace_id, leaderboard_name, sort_order, account_id,
-                  display_name, score, time_to_live, profile):
+    async def add_entry(self, gamespace_id, leaderboard_name, sort_order, account_id,
+                        display_name, score, time_to_live, profile):
 
         clustered = LeaderboardsModel.is_clustered(leaderboard_name)
 
-        with (yield self.db.acquire()) as db:
+        async with self.db.acquire() as db:
             try:
 
                 try:
-                    leaderboard = yield self.find_leaderboard(
+                    leaderboard = await self.find_leaderboard(
                         gamespace_id, leaderboard_name,
                         sort_order, db=db)
 
                 except LeaderboardNotFound:
-                    leaderboard_id = yield db.insert(
+                    leaderboard_id = await db.insert(
                         """
                             INSERT INTO `leaderboards`
                             (`leaderboard_name`, `gamespace_id`, `leaderboard_sort_order`)
@@ -407,26 +390,26 @@ class LeaderboardsModel(Model):
                         """, leaderboard_name, gamespace_id, sort_order)
 
                     if clustered:
-                        cluster_id = yield self.cluster.get_cluster(
+                        cluster_id = await self.cluster.get_cluster(
                             gamespace_id, account_id, leaderboard_id,
                             cluster_size=self.cluster_size, auto_create=True)
                     else:
                         cluster_id = 0
 
-                    yield self.insert_record(
+                    await self.insert_record(
                         gamespace_id, leaderboard_id, account_id,
                         time_to_live, profile, score, display_name,
                         cluster_id=cluster_id, db=db)
                 else:
 
                     if clustered:
-                        cluster_id = yield self.cluster.get_cluster(
+                        cluster_id = await self.cluster.get_cluster(
                             gamespace_id, account_id, leaderboard.leaderboard_id,
                             cluster_size=self.cluster_size, auto_create=True)
                     else:
                         cluster_id = 0
 
-                    record = yield db.get(
+                    record = await db.get(
                         """
                             SELECT *
                             FROM `records`
@@ -439,13 +422,13 @@ class LeaderboardsModel(Model):
                     )
 
                     if not record:
-                        yield self.insert_record(
+                        await self.insert_record(
                             gamespace_id, leaderboard.leaderboard_id, account_id,
                             time_to_live, profile, score, display_name,
                             cluster_id=cluster_id, db=db
                         )
                     else:
-                        yield db.execute(
+                        await db.execute(
                             """
                                 UPDATE `records`
                                 SET `expire_at`=NOW() + INTERVAL %s SECOND, `profile`=%s,
@@ -456,4 +439,4 @@ class LeaderboardsModel(Model):
                             score, display_name, leaderboard.leaderboard_id, account_id, gamespace_id, cluster_id)
             except DatabaseError as e:
                 raise LeaderboardError(500, "Failed add entry: " + e.args[1])
-        raise Return("OK")
+        return "OK"
