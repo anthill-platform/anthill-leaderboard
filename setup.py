@@ -7,6 +7,9 @@ DEPENDENCIES = [
 
 setup(
     name='anthill-leaderboard',
+    package_data={
+      "anthill.leaderboard": ["anthill/leaderboard/sql", "anthill/leaderboard/static"]
+    },
     setup_requires=["pypigit-version"],
     git_version="0.1.0",
     description='User ranking service for Anthill Platform',
