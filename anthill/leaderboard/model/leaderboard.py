@@ -206,7 +206,7 @@ class LeaderboardsModel(Model):
                 offset,
                 limit)
 
-            return map(RecordAdapter, records)
+            return list(map(RecordAdapter, records))
 
     async def list_friends_records(self, friends_ids, leaderboard_name, gamespace_id, sort_order, offset, limit):
 
@@ -225,7 +225,7 @@ class LeaderboardsModel(Model):
                 """.format(sort_order.upper()),
                 leaderboard.leaderboard_id, gamespace_id, friends_ids, offset, limit)
 
-            return map(RecordAdapter, records)
+            return list(map(RecordAdapter, records))
 
     # noinspection PyBroadException
     async def list_top_all_clusters(self, leaderboard_name, gamespace_id, sort_order):
